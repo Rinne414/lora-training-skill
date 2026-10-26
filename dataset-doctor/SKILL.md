@@ -65,7 +65,7 @@ description: "Audit and repair a kohya-style LoRA dataset before training. Use w
 ## 解读结论
 
 - **FAIL（critical）**：有图无法解码（会让训练崩）、根本没有图。**必须先修，禁止开训。**
-- **WARN（high/medium）**：缺 caption、**多行 caption（训练端只读第一行）**、trigger 不一致、重复图、非 RGB、低于训练分辨率、过/欠标、artifact tag、JSON 结构错。**可训，但先把建议过一遍并向用户确认。**
+- **WARN（high/medium）**：缺 caption、**多行 caption（训练端只读第一行）**、trigger 不一致、重复图、非 RGB、低于训练分辨率、过/欠标、artifact tag、JSON 结构错、**人数标签自相矛盾**（`1girl` 与 `2girls`、`solo` 与 `multiple girls`）、**过期的训练缓存**（改过的图 / caption 仍会按旧缓存训练）。**可训，但先把建议过一遍并向用户确认。**
 - **PASS（low/info 或无）**：可以训。
 
 按 `recommendations`（已按严重度排序、去重）逐条处理。`scan.issues` / `captions.issues` 里每条都带 `code`、`message`、`fix`、`items`（示例文件，最多 12 个）。
@@ -91,6 +91,8 @@ description: "Audit and repair a kohya-style LoRA dataset before training. Use w
 | `ubiquitous_tags` | 先核对哪个是有意的 trigger，其余用 `strip-tags --tags "..."` 删 |
 | `missing_captions` / `empty_captions` | Anima：`tag_dataset.py --dataset-dir <concept-dir> ...`;其他底模：`POST /api/interrogate` + `additional_tags=<TRIGGER>` |
 | `below_target_resolution` / `tiny_images` | 换更高分辨率源；`bucket_no_upscale` 下小图细节受限（无自动修复） |
+| `subject_count_conflict` | `fix_dataset.py fix-subject-count <dir>`：同类人数标签留较大的（`1girl`+`2girls` → `2girls`；`1girl`+`multiple girls` → `multiple girls`），多人图去掉 `solo`；`solo focus` 不动。caption 就地改写（没有备份），计划里逐条列出会删哪些 tag；改完文本编码器缓存会过期，见下一行 |
+| `stale_cache` | `fix_dataset.py quarantine-cache <dir>`：只把过期 / 孤立的缓存文件移进 `_quarantine/`（kohya 的 `*.npz`、musubi 风格的 `*_<arch>.safetensors`（读文件头里的 `architecture` 确认是缓存）、`*_latent_cache/` 文件夹），图片和 caption 不动；训练器下次会重建。按文件修改时间比较：图片比缓存新 → 旧 latent；caption 比文本编码器缓存（`*_te`）新 → 旧 caption；找不到同名图 → 孤立。如果数据集是用不保留修改时间的方式复制来的，先看清单再确认 |
 | `mixed_repeats` | 核对各概念「有效图片数」比例是否符合预期（无需修复） |
 
 打标 / 修复后，**重新跑一次 `doctor.py`** 确认问题已清。误修了想还原 → 把 `_quarantine/` 里的文件移回原位即可。
@@ -103,6 +105,7 @@ description: "Audit and repair a kohya-style LoRA dataset before training. Use w
 4. 解读了 `verdict` 并按 `recommendations` 顺序给建议。
 5. 任何 `fix_dataset.py --apply` / 打标操作**已先 dry-run 摊牌并取得用户确认**；从不手写删除命令，从不直接删文件（一律走 `_quarantine/`）。
 6. 修复后重跑体检确认。
+7. 改过图片或 caption 之后（包括 `fix-subject-count` / `strip-tags` / `add-trigger`）再开训，先看体检有没有 `stale_cache`；有就走 `quarantine-cache`，否则会按旧缓存训练。
 
 ## 可验证案例
 

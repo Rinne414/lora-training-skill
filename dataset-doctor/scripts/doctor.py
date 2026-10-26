@@ -31,7 +31,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import _common as C  # noqa: E402
 import scan_dataset  # noqa: E402
+import check_cache  # noqa: E402
 import check_captions  # noqa: E402
+import check_subjects  # noqa: E402
 
 VERDICT_PASS = "PASS"
 VERDICT_WARN = "WARN"
@@ -108,6 +110,11 @@ def run_doctor(
         recursive=recursive,
         prefer_json=prefer_json,
         trigger=trigger,
+    )
+    # Later checks live in their own modules; their issues join the sub-report they belong to.
+    scan_result["issues"] = list(scan_result["issues"]) + check_cache.analyze_cache(root, recursive)
+    caption_result["issues"] = list(caption_result["issues"]) + check_subjects.analyze_subjects(
+        root, recursive, prefer_json
     )
     verdict = compute_verdict(scan_result, caption_result)
     return {

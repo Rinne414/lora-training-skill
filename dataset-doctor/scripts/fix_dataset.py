@@ -21,6 +21,9 @@ Commands (issue code they fix):
     add-trigger         trigger_inconsistent ensure the trigger exists in every caption
     strip-tags          artifact_tags        remove source-noise + unwanted tags
                         duplicate_tags       (also de-duplicates tags per caption)
+    fix-subject-count   subject_count_conflict  keep the higher count (1girl vs 2girls), drop solo
+                                             on images with several subjects
+    quarantine-cache    stale_cache          set aside stale / orphaned training caches
 
 Usage:
     python fix_dataset.py <command> <path> [options] [--apply] [--json]
@@ -536,7 +539,10 @@ def _print_human(result: dict) -> None:
     if result["action_count"] == 0:
         print("  nothing to do - dataset already clean for this fix")
     elif not result["applied"]:
-        print("re-run with --apply to execute (originals go to _quarantine/, never deleted)")
+        print(
+            "re-run with --apply to execute (moved files go to _quarantine/, never deleted; "
+            "caption rewrites are made in place)"
+        )
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -571,6 +577,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_strip = add("strip-tags", "remove artefact tags and per-caption duplicate tags")
     p_strip.add_argument("--tags", default="", help="extra comma-separated tags to remove")
 
+    add(
+        "fix-subject-count",
+        "resolve 1girl-vs-2girls style conflicts and solo with several subjects",
+    )
+    add(
+        "quarantine-cache", "set aside stale or orphaned training caches (images are never touched)"
+    )
+
     args = parser.parse_args(argv)
     root = Path(args.path)
     if not root.is_dir():
@@ -587,8 +601,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             result = cmd_to_rgb(root, args.apply)
         elif args.command == "add-trigger":
             result = cmd_add_trigger(root, args.trigger, args.apply)
-        else:
+        elif args.command == "strip-tags":
             result = cmd_strip_tags(root, args.tags, args.apply)
+        else:
+            import fix_extras  # imported here because it imports this module
+
+            run = {
+                "fix-subject-count": fix_extras.cmd_fix_subject_count,
+                "quarantine-cache": fix_extras.cmd_quarantine_cache,
+            }[args.command]
+            result = run(root, args.apply)
     except ValueError as exc:
         parser.error(str(exc))
 
