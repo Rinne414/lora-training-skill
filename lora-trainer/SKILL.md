@@ -83,10 +83,21 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 
 **6. 监看。** 轮询 `GET /api/train/log/tail/{task_id}?limit=240`（或让用户开 `data.train_log_url` / 6008 监控面板）。盯：`loss=nan`（多见于 fp16 → 改 bf16 或换优化器）、OOM（加 `gradient_checkpointing` / `blocks_to_swap` / 降分辨率）、报错退出。
 
+**读 loss 曲线和预览图。** 开训前记下发出 `POST /api/run` 的 unix 时间 `<LAUNCH_TS>`，监看时每隔几分钟（或每个 epoch）跑一次：
+
+```
+python scripts/task_insights.py --task-id <task_id> --out ./insights --output-dir <output_dir> --output-name <output_name> --logging-dir <logging_dir> --since <LAUNCH_TS>
+```
+
+- 新版 trainer 直接回答 `GET /api/tasks/{task_id}/metrics` 与 `/previews`（已按本次任务的起止时间过滤，同名重训不会混进上一次的图和曲线）。脚本优先用它们，输出里 `source` = `trainer_api`。
+- 老版 trainer（这些路由返回 404 Not Found），或 trainer 重启后 task_id 失效：脚本自动退回扫描 `<output_dir>/sample` 和 TensorBoard 的 `logging_dir`，`source` = `folder_scan`，`fallback_because` 写明原因。退回扫描时**必须**带 `--since`，否则同名旧图和旧曲线会混进来。
+- 看 `loss_summary`：`has_nan_or_inf=true` → 按上面的 nan 处理。loss 噪声大，只当辅助：`last` 明显高于 `min` 或后半段回升，只说明「值得试更早的快照」，不是定论。预览图落在 `--out` 目录，每次只看新增的几张。
+- `loss_reason` / `previews_reason` 非空表示没拿到数据（没开 `enable_preview`、没装 tensorboard、还没到第一次出图……），照实转述，不要编数据。
+
 ## 训练完成后（别漏这步）
 
 1. 产物在 `output_dir` 下：按 `save_every_n_epochs` 会有多个 epoch 快照（`<name>-000002.safetensors` …）+ 最终档。
-2. **怎么挑**：复制至少一个早期和最终快照到 ComfyUI，用 `validate.py` 在相同 seed 下与 strength 0 baseline 比较。选择能表达目标、同时仍响应姿势/主体/背景变化的快照。
+2. **怎么挑**：复制至少一个早期和最终快照到 ComfyUI，用 `validate.py` 在相同 seed 下与 strength 0 baseline 比较。选择能表达目标、同时仍响应姿势/主体/背景变化的快照。trainer 自带的预览图和 loss（`scripts/task_insights.py`）只做粗筛辅助，不替代 `validate.py` 的同 seed 对比。
 3. 身份弱时先比较权重 0.8–1.1，再决定是否加练；僵脸、固定姿势或内容污染时用更早快照。
 
 ## 模型与适配器分支
@@ -102,6 +113,7 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 | 开训前体检数据集 / caption | `../dataset-doctor/scripts/doctor.py` |
 | 一行命令修数据集问题（dry-run → --apply） | `../dataset-doctor/scripts/fix_dataset.py` |
 | API 端点、`/api/run` body、SSE、打标、显卡查询 | `../references/trainer-api.md` |
+| 读本次训练的 loss 曲线 / 预览图（优先 trainer API，老版自动退回扫描文件夹） | `scripts/task_insights.py` |
 | 参数含义、默认值、VRAM、步数预算 | `../references/anima-params.md` |
 | 起手配置模板（角色/画风/低显存） | `../references/presets.md` |
 | caption 写法、trigger 取法 | `../references/caption-guide.md` |
@@ -117,6 +129,7 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 7. 估算了 `total_steps`；~1000–2500 只作首轮检查区间，偏离时已说明依据而非硬拦截。
 8. **已出确认卡并取得开训确认**；未确认不 POST。
 9. Anima 用 `bf16`；`Automagic`/`CAME` 会被服务端强制 bf16。
+10. 读 loss / 预览用 `task_insights.py`；退回文件夹扫描时带了 `--since`，并如实转述 `loss_reason` / `previews_reason`。
 
 ## 可验证案例（快速通道）
 

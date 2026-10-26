@@ -18,13 +18,14 @@ neutral, style-descriptive names.
 
 ## Running the tests
 
-Install the contributor dependencies, then run all three `unittest` suites:
+Install the contributor dependencies, then run all four `unittest` suites:
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m unittest discover -s tests -v
 python -m unittest discover -s dataset-doctor/tests -v
 python -m unittest discover -s lora-pipeline/tests -v
+python -m unittest discover -s lora-trainer/tests -v
 ```
 
 The tests are offline and need no GPU. They must pass before a PR.

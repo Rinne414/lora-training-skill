@@ -116,6 +116,34 @@ Lightweight polling alternatives:
 
 > `task_id` is only valid for the **current** server session.
 
+### 2b. Per-task loss, previews and config (newer trainers only)
+
+Trainers that ship `mikazuki/utils/task_insights.py` (lora-scripts-next main; the
+story-next fork from branch `feat/task-insights-api`) answer these. Older trainers
+return `404 {"detail":"Not Found"}` for them; use the folder-scan fallback below.
+
+| Route | Returns (`data`) |
+|---|---|
+| `GET /api/tasks/{task_id}/metrics` | `tags`: `loss/average`, `loss/current`, `loss/epoch_average`, `lr/unet` as `[{step, value}]` (about 500 points per tag, evenly thinned); `progress`: `{step, total_steps, epoch, total_epochs, percent}` parsed from stdout |
+| `GET /api/tasks/{task_id}/previews` | `images`: `[{name, epoch, step, mtime, url, thumb_url}]`, oldest first; `preview_enabled` |
+| `GET /api/tasks/{task_id}/previews/{filename}` | the image file; add `?thumb=1` for a 384px JPEG |
+| `GET /api/tasks/{task_id}/config` | `config` (the run's TOML as JSON), `train_type`, `output_name` |
+
+- Everything is filtered to that task's own run window (`started_at` .. `finished_at`
+  in the task metadata), so a re-run with the **same `output_name`** and folders never shows the
+  earlier run's images or curve.
+- No data yet is HTTP **200** with an empty result plus `reason` / `reason_text`
+  (`output_dir_missing`, `no_preview_in_window`, `previews_not_configured`,
+  `logging_dir_missing`, `tensorboard_not_installed`, `no_run_in_window`, ...). Only an unknown
+  `task_id` (restarted server, or pruned from the bounded finished-task history) is `404 "Unknown task_id..."`.
+- `{filename}` must be a name from the `previews` list; anything else (`..`, separators,
+  absolute paths) is a 404.
+
+`lora-trainer/scripts/task_insights.py` wraps this: it asks these routes first and, when the
+trainer is older or forgot the task, scans `<output_dir>/sample` and the TensorBoard
+`logging_dir` instead (pass `--since <unix time of POST /api/run>` so an earlier same-name run
+is left out). Its JSON output says which one it used (`source`) and why (`fallback_because`).
+
 ---
 
 ## 3. Auto-caption (WD14 tagger) — `POST /api/interrogate`
