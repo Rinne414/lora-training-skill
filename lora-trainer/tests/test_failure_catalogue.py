@@ -123,7 +123,7 @@ BENIGN = [
     "gradient_checkpointing = true",
     "steps: 100%|██████████| 32/32 [00:37<00:00,  1.17s/it, avr_loss=0.0011]",
     "steps:  12%|█▎        | 4/32 [00:05<00:30,  1.17s/it, avr_loss=0.00121]",
-    "INFO     DiT config: num_blocks=28 (inferred from I:/ComfyUI/models/anima.safetensors)",
+    "INFO     DiT config: num_blocks=28 (inferred from D:/models/anima.safetensors)",
     "saving checkpoint: D:/out/zkz/zkz.safetensors",
     "INFO     8 train images with repeats.     train_util.py:2307",
     "INFO     0 reg images with repeats.       train_util.py:2311",
