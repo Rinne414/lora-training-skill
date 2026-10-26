@@ -184,5 +184,19 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(summary["tag"], "loss/current")
 
 
+class LoraBaseTests(unittest.TestCase):
+    def test_base_report_is_added_when_the_lora_exists(self) -> None:
+        names = [f"lora_unet_blocks_{n}_self_attn_q_proj.lora_down.weight" for n in range(28)]
+        header = {n: {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]} for n in names}
+        raw = json.dumps(header).encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            self.assertIsNone(insights.lora_base_report(str(out), "zkz", None))
+            (out / "zkz.safetensors").write_bytes(len(raw).to_bytes(8, "little") + raw + bytes(4))
+            report = insights.lora_base_report(str(out), "zkz", None)
+        self.assertEqual(report["lora"]["block_count"], 28)
+        self.assertIsNone(insights.lora_base_report(None, "zkz", None))
+
+
 if __name__ == "__main__":
     unittest.main()

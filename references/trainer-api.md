@@ -144,6 +144,16 @@ trainer is older or forgot the task, scans `<output_dir>/sample` and the TensorB
 `logging_dir` instead (pass `--since <unix time of POST /api/run>` so an earlier same-name run
 is left out). Its JSON output says which one it used (`source`) and why (`fallback_because`).
 
+`lora-trainer/scripts/lora_base_info.py` (also run by `task_insights.py` when it is given `--output-dir`
+and `--output-name`; its result is the `lora_base` key) reads the finished LoRA's safetensors header
+and says which Anima it was trained for. Anima 2.9B inserts 12 blocks (at 2, 5, 8, 11, 14, 17, 21, 24,
+27, 30, 33, 36) into the 28-block model, so the highest `blocks_<n>` in the tensor names decides:
+only 0-27 means 28 blocks (2B / 1.0); any 28-39 means 40 blocks (2.9B). With `--base-model` it reads the
+configured checkpoint's header (`net.blocks.<n>`) the same way and compares. A 28-block LoRA on a 2.9B
+model needs a key remap (for example the ComfyUI-Anima-28to40-Lora-Stack node); a 40-block LoRA does not
+load correctly on 2B. A native 40-block LoRA that never touches blocks 28-39 cannot be told apart from a
+28-block one by its keys; the report says so.
+
 ### 2c. Dataset in use — `409 dataset_in_use` and `GET /api/datasets/in-use` (newer trainers only)
 
 Trainers that ship `mikazuki/utils/dataset_inuse.py` (the story-next fork, branch

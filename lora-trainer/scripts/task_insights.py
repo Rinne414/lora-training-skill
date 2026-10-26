@@ -26,6 +26,7 @@ Standard library only. TensorBoard is optional and only used by the fallback.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import re
@@ -284,6 +285,24 @@ def collect(
     return result
 
 
+def lora_base_report(
+    output_dir: Optional[str], output_name: str, base_model: Optional[str]
+) -> Optional[dict]:
+    """Anima base (28 or 40 blocks) of the newest LoRA the run wrote; None without a file."""
+    if not output_dir or not output_name:
+        return None
+    path = Path(__file__).with_name("lora_base_info.py")
+    spec = importlib.util.spec_from_file_location("lora_base_info", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    lora = module.newest_lora(Path(output_dir), output_name)
+    if lora is None:
+        return None
+    return module.build_report(lora, Path(base_model) if base_model else None)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -294,6 +313,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--output-name", default="", help="fallback: the run's output_name")
     parser.add_argument("--logging-dir", help="fallback: the run's logging_dir (TensorBoard)")
     parser.add_argument("--since", type=float, help="fallback: unix time the run was launched")
+    parser.add_argument(
+        "--base-model", help="the run's pretrained_model_name_or_path (28/40-block check)"
+    )
     parser.add_argument("--out", help="copy / download preview images into this folder")
     parser.add_argument("--thumb", action="store_true", help="download 384px JPEG thumbnails")
     args = parser.parse_args(argv)
@@ -316,6 +338,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         loss_file = Path(args.out) / "loss.json"
         loss_file.write_text(json.dumps(result["tags"]), encoding="utf-8")
         result["loss_file"] = str(loss_file)
+    base_report = lora_base_report(args.output_dir, args.output_name, args.base_model)
+    if base_report is not None:
+        result["lora_base"] = base_report
     result["tags"] = {tag: f"{len(points)} points" for tag, points in result["tags"].items()}
     print(json.dumps(result, indent=2, ensure_ascii=True))
     return 0

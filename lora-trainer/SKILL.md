@@ -86,7 +86,7 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 **读 loss 曲线和预览图。** 开训前记下发出 `POST /api/run` 的 unix 时间 `<LAUNCH_TS>`，监看时每隔几分钟（或每个 epoch）跑一次：
 
 ```
-python scripts/task_insights.py --task-id <task_id> --out ./insights --output-dir <output_dir> --output-name <output_name> --logging-dir <logging_dir> --since <LAUNCH_TS>
+python scripts/task_insights.py --task-id <task_id> --out ./insights --output-dir <output_dir> --output-name <output_name> --logging-dir <logging_dir> --since <LAUNCH_TS> --base-model <pretrained_model_name_or_path>
 ```
 
 - 新版 trainer 直接回答 `GET /api/tasks/{task_id}/metrics` 与 `/previews`（已按本次任务的起止时间过滤，同名重训不会混进上一次的图和曲线）。脚本优先用它们，输出里 `source` = `trainer_api`。
@@ -97,6 +97,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 ## 训练完成后（别漏这步）
 
 1. 产物在 `output_dir` 下：按 `save_every_n_epochs` 会有多个 epoch 快照（`<name>-000002.safetensors` …）+ 最终档。
+   **每次训练结束都要报告 base**：`task_insights.py` 的输出里 `lora_base` 读的是产物 safetensors 文件头（只读头，不加载权重；也可单独跑 `python scripts/lora_base_info.py <lora> --base-model <pretrained_model_name_or_path>`）。按 key 里最大的 `blocks_<n>`：只有 0–27 → **28 块（Anima 2B / 1.0）**；出现 28–39 → **40 块（2.9B）**。同时读底模文件头的块数并对比，`compatible=false` 或 `warnings` 非空时把原话（中英文都有）转给用户：28 块 LoRA 放到 2.9B 上要先做 key 重映射（如 ComfyUI-Anima-28to40-Lora-Stack 节点），否则会作用到错误的层；40 块 LoRA 在 2B 上无法正确加载。`notes` 里的「只找到 0–27 块」说明按 key 布局无法区分「从不碰 28–39 块的原生 40 块 LoRA」，照实转述。最终报告里写明：产物是 28 块还是 40 块、配置的底模路径和它的块数。命名沿用 `<concept>-anima-v<N>`，该约定没有位置放块数标签，所以不改文件名，base 只写进 `lora_base`。读不了文件头（`error`）就如实说「未能确认」，不要猜。
 2. **怎么挑**：复制至少一个早期和最终快照到 ComfyUI，用 `validate.py` 在相同 seed 下与 strength 0 baseline 比较。选择能表达目标、同时仍响应姿势/主体/背景变化的快照。trainer 自带的预览图和 loss（`scripts/task_insights.py`）只做粗筛辅助，不替代 `validate.py` 的同 seed 对比。
 3. 身份弱时先比较权重 0.8–1.1，再决定是否加练；僵脸、固定姿势或内容污染时用更早快照。
 
@@ -114,6 +115,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 | 一行命令修数据集问题（dry-run → --apply） | `../dataset-doctor/scripts/fix_dataset.py` |
 | API 端点、`/api/run` body、SSE、打标、显卡查询 | `../references/trainer-api.md` |
 | 读本次训练的 loss 曲线 / 预览图（优先 trainer API，老版自动退回扫描文件夹） | `scripts/task_insights.py` |
+| 判断产物 LoRA 是 28 块（2B / 1.0）还是 40 块（2.9B），并对比底模 | `scripts/lora_base_info.py`（或 `task_insights.py` 输出里的 `lora_base`） |
 | 参数含义、默认值、VRAM、步数预算 | `../references/anima-params.md` |
 | 起手配置模板（角色/画风/低显存） | `../references/presets.md` |
 | caption 写法、trigger 取法 | `../references/caption-guide.md` |
