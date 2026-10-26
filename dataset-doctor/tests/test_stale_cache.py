@@ -26,6 +26,9 @@ from PIL import Image  # noqa: E402
 OLD, NEW = 1_700_000_000, 1_700_100_000  # seconds; a day apart
 
 
+NO_TRAINER = ["--trainer-url", "http://127.0.0.1:9"]  # never ask a real trainer from a test
+
+
 def set_time(path: Path, when: float) -> Path:
     os.utime(path, (when, when))
     return path
@@ -300,7 +303,7 @@ class QuarantineCacheTests(CacheCase):
             self.assertEqual(F.main(["quarantine-cache", str(self.tmp)]), 0)
         self.assertTrue(files["stale"].exists())
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(F.main(["quarantine-cache", str(self.tmp), "--apply"]), 0)
+            self.assertEqual(F.main(["quarantine-cache", str(self.tmp), "--apply", *NO_TRAINER]), 0)
         self.assertFalse(files["stale"].exists())
 
 

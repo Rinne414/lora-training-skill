@@ -95,6 +95,8 @@ description: "Audit and repair a kohya-style LoRA dataset before training. Use w
 | `stale_cache` | `fix_dataset.py quarantine-cache <dir>`：只把过期 / 孤立的缓存文件移进 `_quarantine/`（kohya 的 `*.npz`、musubi 风格的 `*_<arch>.safetensors`（读文件头里的 `architecture` 确认是缓存）、`*_latent_cache/` 文件夹），图片和 caption 不动；训练器下次会重建。按文件修改时间比较：图片比缓存新 → 旧 latent；caption 比文本编码器缓存（`*_te`）新 → 旧 caption；找不到同名图 → 孤立。如果数据集是用不保留修改时间的方式复制来的，先看清单再确认 |
 | `mixed_repeats` | 核对各概念「有效图片数」比例是否符合预期（无需修复） |
 
+`--apply` 之前 `fix_dataset.py` 会先问 trainer（`GET /api/datasets/in-use`）这个文件夹是不是正被排队或运行中的训练使用：是 → 退出码 3 并打印 STOP，什么都不改；先问用户，同意后同一条命令加 `--allow-in-use`。dry-run 不问；trainer 没开或太旧只打一行提示、照常继续（`--trainer-url` 可改地址，默认 `http://127.0.0.1:28000`）。
+
 打标 / 修复后，**重新跑一次 `doctor.py`** 确认问题已清。误修了想还原 → 把 `_quarantine/` 里的文件移回原位即可。
 
 ## 自检

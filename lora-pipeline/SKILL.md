@@ -59,6 +59,8 @@ description: "Build an Anima LoRA from a single-character or style name, from Da
               safety 词表 questionable→nsfw、单行、未评分图片不伪造质量标签)→ **caption 悖论修剪**:
               把 ≥0.9 出现率的不变身份特征加进 blacklist,并把候选与决定写入 tag-audit.json。
               重打标后再报告错主体/多人语义警告;只警告,由用户复查,不自动删除。
+            BUILD 与 TAG 都会先问 trainer(`GET /api/datasets/in-use`)这个文件夹是不是正被排队或运行中的训练使用:
+            是 → 退出码 3 并打印 STOP,先问用户;同意后同一条命令加 `--allow-in-use`。trainer 没开或太旧只打一行提示,照常继续。
 4  DOCTOR   ../dataset-doctor/scripts/doctor.py "<work>/dataset" --trigger <t> --epochs 10 --report
             → 按 dataset-doctor 修复到 PASS(FAIL 挡下,WARN 让用户接受)。
 5  TRAIN    交给 lora-trainer:以约 1500 步作首轮预算并核对 doctor 实际步数

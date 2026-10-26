@@ -30,6 +30,9 @@ Usage:
   python tag_dataset.py --dataset-dir "D:/work/style/dataset/5_style" --trigger @mystyle --style
   python tag_dataset.py ... --consensus          # require agreement from 2 of 3 taggers
   python tag_dataset.py ... --no-trait-prune     # keep identity traits in captions
+If the trainer is running and reports the folder as used by a queued or running
+training, this stops (exit 3) before it writes any caption; pass --allow-in-use once
+the user has agreed.
 Environment overrides:
   SORTER_URL   base URL of sd-image-sorter (default http://127.0.0.1:8487)
 """
@@ -49,6 +52,7 @@ from typing import TypedDict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import dataset_profile as profile  # noqa: E402
+import in_use_guard  # noqa: E402
 
 SORTER = os.environ.get("SORTER_URL", "http://127.0.0.1:8487").rstrip("/")
 REQUEST_ATTEMPTS = 3
@@ -483,6 +487,7 @@ def main() -> int:
         action="store_true",
         help="force re-tag (else only untagged images are tagged)",
     )
+    in_use_guard.add_guard_arguments(ap)
     a = ap.parse_args()
     if not a.style and not a.subject_tag:
         ap.error("--subject-tag is required for character tagging")
@@ -496,6 +501,10 @@ def main() -> int:
     if not concept_dir.is_dir():
         print(f"ERROR: dataset directory not found: {concept_dir}")
         return 2
+
+    blocked = in_use_guard.guard_paths([str(concept_dir)], a.trainer_url, a.allow_in_use)
+    if blocked:
+        return blocked
 
     use_smart_tag = bool(a.consensus or a.nl)
     use_trait_candidates = purpose == "character" and not a.no_trait_prune

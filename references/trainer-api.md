@@ -212,10 +212,29 @@ contains `path` (or equals it) counts. A missing folder is fine (`in_use: false`
 An older trainer returns `404 {"detail":"Not Found"}`: treat that as "unknown", not "free".
 
 `lora-pipeline/scripts/in_use_guard.py` wraps the check for scripts that rewrite a dataset folder
-on disk (they bypass the trainer's guard): `build_dataset.py` calls it first and exits **3** with a
+on disk (they bypass the trainer's guard): `build_dataset.py`, `tag_dataset.py` and
+`dataset-doctor/scripts/fix_dataset.py --apply` call it first and exit **3** with a
 `STOP:` message unless `--allow-in-use` is given (ask the user first). A trainer that is down or
 too old only prints a note and the script carries on. Standalone: `python in_use_guard.py --path
 "<folder>"` prints JSON and exits 3 when in use.
+
+### 2d. Engines, queue and `/api/run` in newer trainers
+
+The story-next fork (branches `feat/engine-state` and later) adds routes that the skill reads through
+`lora-trainer/scripts/trainer_state.py`; an older trainer answers `404 {"detail":"Not Found"}` for all of
+them and the script reports "older build, skipped" instead of failing.
+
+| Route | Use |
+|---|---|
+| `GET /api/engines` | per train type: `state` (`ready`, `broken`, `not_installed`, `unknown`, ...), `reason_zh/en`, `hint_zh/en` |
+| `POST /api/engines/diagnose` | body `{train_type, config}`; deeper `issues` per engine (also a standing Windows + NVIDIA warning `windows_sysmem_fallback`) and `config_issues` for model files that do not exist |
+| `GET /api/queue` | `entries[]` (`status`, `task_id`, `interrupted`), `active`, `running_task_id`, and after a restart `restored = {queued, interrupted, waiting, message_zh, message_en}` |
+| `POST /api/queue/start` | starts a restored queue. After a restart the trainer holds queued entries (`restored.waiting = true`) and never starts the GPU by itself: ask the user first |
+| `POST /api/run` | now answers `{"queued": true, "entry_id": ...}` (no `task_id` yet; the entry gets one in `GET /api/queue` once it starts). If the name was taken it is renamed `name_2`, `name_3`, ... and the response carries `output_name_renamed = {from, to}`: use the new name for the LoRA file, previews and the result record |
+| `POST /api/plugins/anima-lora/repair` | a **full reinstall** of the Anima Fast environment (can re-download gigabytes). The skill never calls it without asking the user, and `trainer_state.py` has no command for it |
+
+Entries with `interrupted = true` were training when the trainer restarted. They are marked failed and are
+never re-queued automatically; the skill lists them and leaves "Requeue" to the user.
 
 ---
 

@@ -10,6 +10,7 @@ They follow fix_dataset.py's safety model: dry-run unless ``apply``, caches are 
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -25,6 +26,32 @@ TEXT_CACHE_HINT = (
     "Caption text changed, so any text-encoder cache built before it (…_te.npz / …_te.safetensors) "
     "is out of date: the doctor reports it as stale_cache; fix_dataset.py quarantine-cache moves it aside."
 )
+
+
+def load_in_use_guard():
+    """The lora-pipeline in-use check, or None when this skill is installed without it."""
+    path = Path(__file__).resolve().parents[2] / "lora-pipeline" / "scripts" / "in_use_guard.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("in_use_guard", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def guard_apply(root: Path, trainer_url: str, allow_in_use: bool) -> int:
+    """0 = go ahead, 3 = the trainer says a queued or running training uses this folder."""
+    guard = load_in_use_guard()
+    if guard is None:
+        print(
+            f"note: could not check whether {root} is in use (in_use_guard.py not found "
+            "next to this skill)",
+            file=sys.stderr,
+        )
+        return 0
+    return guard.guard_paths([str(root)], trainer_url, allow_in_use)
 
 
 def _rewrite_txt(path: Path, apply: bool, actions: list[F.Action]) -> bool:

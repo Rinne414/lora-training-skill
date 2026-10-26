@@ -22,6 +22,9 @@ import fix_extras as X  # noqa: E402
 from PIL import Image  # noqa: E402
 
 
+NO_TRAINER = ["--trainer-url", "http://127.0.0.1:9"]  # never ask a real trainer from a test
+
+
 def kept(tags: list[str]) -> list[str]:
     return S.resolve_tags(tags)[0]
 
@@ -191,7 +194,9 @@ class FixTests(DatasetCase):
             self.assertEqual(F.main(["fix-subject-count", str(self.tmp)]), 0)
         self.assertEqual(path.read_text(encoding="utf-8"), "1girl, 2girls")
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(F.main(["fix-subject-count", str(self.tmp), "--apply"]), 0)
+            self.assertEqual(
+                F.main(["fix-subject-count", str(self.tmp), "--apply", *NO_TRAINER]), 0
+            )
         self.assertEqual(path.read_text(encoding="utf-8"), "2girls")
 
 

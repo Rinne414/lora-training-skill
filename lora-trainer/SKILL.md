@@ -30,7 +30,15 @@ description: "Prepare and launch LoRA, LoKr, or T-LoRA training through lora-scr
 
 ## 快速通道（只需要一个图片文件夹）
 
-**0. 连 trainer、读显卡。** `GET /api/version` 确认在跑（连不上 → 让用户启动 `run_gui.bat`，可建议在输入框输入 `! run_gui.bat` 直接在会话里运行）。再 `GET /api/graphic_cards` 自动读显存——**不要问用户显存多大**。
+**0. 连 trainer、读显卡。** `GET /api/version` 确认在跑（连不上 → 让用户启动 `run_gui.bat`，可建议在输入框输入 `! run_gui.bat` 直接在会话里运行）。再 `GET /api/graphic_cards` 自动读显存——**不要问用户显存多大**。然后看队列：
+
+```
+python scripts/trainer_state.py queue
+```
+
+- 新版 trainer 重启后会把没跑完的队列扣下：`ask_user_before_start=true`（`restored.waiting`）时，把 `restored.message_zh / message_en` 转给用户，**先问**，同意了才 `python scripts/trainer_state.py start-queue --confirmed`（它内部是 `POST /api/queue/start`；不带 `--confirmed` 会拒绝）。
+- `interrupted` 里列的是被重启打断的训练：**绝不自动重新排队**，只告诉用户有这几个，要不要重训由用户在 trainer 里点「重新排队」决定。
+- `available=false`（老版 trainer 没有队列）就跳过，注明「老版本，已跳过」。
 
 **1. 收集最少输入。** 必需：图片文件夹路径、练**单角色/概念**还是**画风**。单角色再明确 `1girl` / `1boy` / `1other`;画风 trigger 必须用 `@` 前缀。其余自动推：
 
@@ -48,7 +56,15 @@ description: "Prepare and launch LoRA, LoKr, or T-LoRA training through lora-scr
 - `repeats = clamp(round(150 / 图片数), 1, 10)`，`epochs = 10`（画风 12）→ 约 1500 步仅作首轮预算。doctor 去重后重算实际步数，并通过固定 seed 快照比较决定是否早停。
 - preset（`../references/presets.md`）：显存 ≥16GB → preset 1（角色）/ 2（画风）；≤12GB → preset 3（LoKr + `blocks_to_swap=16`；8GB 改 24）。
 
-**4. 确认卡（强制）。** 用人话摊牌，等用户回「确认」：
+**4. 环境预检 + 确认卡（强制）。** 先把组装好的 flat config 存成 JSON，跑：
+
+```
+python scripts/trainer_state.py preflight --config <config.json>
+```
+
+它调 `GET /api/engines` 与 `POST /api/engines/diagnose`（带 `train_type` 和这份 config），把引擎状态、模型文件找不到之类的问题**在开训前**报出来，不用等启动失败。`verdict=problems` 时把 `engine.reason_*` / `hint_*`、`issues`、`config_issues` 里的 `reason_zh|en` 与 `hint_zh|en` 原文写进确认卡的「环境」一行并让用户决定；`warnings`（例如 Windows 上的共享显存提示 `windows_sysmem_fallback`）照实写一句，不拦；`unknown` + `notes` 说明是老版 trainer 没有这些路由，注明「已跳过」。`actions_needing_the_user` 里的「重新安装」是完整重装，**只转述，不替用户点**；**没问用户之前绝不调用 `/api/plugins/anima-lora/repair`**（脚本里也没有这个命令）。
+
+用人话摊牌，等用户回「确认」：
 
 ```
 📋 训练确认卡
@@ -79,7 +95,17 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 
 **4. 摊牌 + 确认（强制）。** 列出关键项（模型类型、底模、`train_data_dir`、`network_dim/alpha`、`unet_lr`、epochs、`total_steps`、`output_dir`、显存预估），**明确征得同意**再开训。
 
-**5. 开训。** `POST /api/run`，body = 组装好的 flat config（JSON）。用 PowerShell `Invoke-RestMethod`（示例见 `trainer-api.md`）。返回 `status: fail` → 把 `message` 给用户并修正；`success` → 记下 `data.task_id` 与 `data.train_log_stream_url`。
+**5. 开训。** 用户确认后：
+
+```
+python scripts/trainer_state.py submit --config <config.json> --confirmed
+```
+
+它 `POST /api/run`（body = 组装好的 flat config），并跟着新版 trainer 的队列条目找到真正的 `task_id`（新版总是先回 `queued` + `entry_id`，老版直接回 `task_id`；老版用 `Invoke-RestMethod` 直接 POST 也行，示例见 `trainer-api.md`）。`--confirmed` 只在用户已回「确认」之后才能加。读结果：
+
+- `status: fail` → 把 `message` 给用户并修正（可再对这段文字跑 `failure_catalogue.py --text "<message>"` 认原因）。
+- **`output_name`** 才是实际用的名字：同名输出已存在或已排队时，trainer 会自动改成 `name_2`，`output_name_renamed = {from, to}` 记录了这次改名。**必须告诉用户改名了**，并且后面的 `task_insights.py --output-name`、预览图、`lora_base_info.py` 和结果记录全部用新名字，别用确认卡上的旧名字。
+- `task_id` 有值 → 用它监看。`task_id` 为空且 `waiting_for_queue_start=true` → 队列被扣着或被暂停，**告诉用户并先问**，同意了再 `start-queue --confirmed`；不要自己启动。
 
 **6. 监看。** 轮询 `GET /api/train/log/tail/{task_id}?limit=240`（或让用户开 `data.train_log_url` / 6008 监控面板）。每次轮询都跑一次故障目录：
 
@@ -136,6 +162,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 | 开训前体检数据集 / caption | `../dataset-doctor/scripts/doctor.py` |
 | 一行命令修数据集问题（dry-run → --apply） | `../dataset-doctor/scripts/fix_dataset.py` |
 | API 端点、`/api/run` body、SSE、打标、显卡查询 | `../references/trainer-api.md` |
+| 开训前看引擎状态、重启后队列、同名输出被改名、拿到真正的 task_id | `scripts/trainer_state.py` |
 | 日志里出现报错 / 训练失败时认原因并给修法（OOM、NaN、缺文件、页面文件不足…） | `scripts/failure_catalogue.py` |
 | Windows 上训练变慢、怀疑显存溢出到共享内存 | `scripts/wddm_sysmem.py` |
 | 读本次训练的 loss 曲线 / 预览图（优先 trainer API，老版自动退回扫描文件夹） | `scripts/task_insights.py` |
@@ -158,6 +185,8 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 10. 读 loss / 预览用 `task_insights.py`；退回文件夹扫描时带了 `--since`，并如实转述 `loss_reason` / `previews_reason`。
 11. 监看时每次轮询都跑了 `failure_catalogue.py`；`findings` 的说明和修法原文转给用户，`error` / `missed_lines` 如实说明，没有把「没读到日志」当成「没报错」。
 12. Windows 上监看时跑了 `wddm_sysmem.py`；`warn` 只转述并建议、没有替用户改驱动设置；`unavailable` 照实说「无法检查」。
+13. 开训前跑了 `trainer_state.py queue`（restored.waiting 先问用户，interrupted 不自动重排）和 `preflight`（`reason_*` / `hint_*` 原文转述；老版 trainer 的 404 注明已跳过）。
+14. 用 `submit` 开训并读了 `output_name_renamed`：改名后的新名字用于输出、预览、`lora_base_info` 和结果记录，并告诉了用户；没有在用户同意前调用 `/api/queue/start`，没有调用 `/api/plugins/anima-lora/repair`。
 
 ## 可验证案例（快速通道）
 

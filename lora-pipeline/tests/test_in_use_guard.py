@@ -30,6 +30,7 @@ def load_script(name: str) -> ModuleType:
 
 guard = load_script("in_use_guard")
 build_dataset = load_script("build_dataset")
+tag_dataset = load_script("tag_dataset")
 
 TASK = {"task_id": "t1", "name": "night-lora", "status": "running", "relation": "inside"}
 
@@ -146,6 +147,46 @@ class BuildDatasetGuardTests(unittest.TestCase):
     def test_unreachable_trainer_does_not_block_a_build(self):
         self.assertEqual(self.run_main("http://127.0.0.1:9"), 0)
         self.assertTrue((self.work / "dataset" / "5_mychar" / "a.png").is_file())
+
+
+class TagDatasetGuardTests(unittest.TestCase):
+    """tag_dataset.py rewrites captions in the folder, so it asks the trainer first."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp(prefix="in-use-tag-")) / "5_mychar"
+        self.folder.mkdir()
+        self.addCleanup(shutil.rmtree, self.folder.parent, ignore_errors=True)
+
+    def run_main(self, trainer_url: str, *extra: str) -> int:
+        argv = [
+            "tag_dataset.py", "--dataset-dir", str(self.folder), "--trigger", "mychar",
+            "--subject-tag", "1girl", "--trainer-url", trainer_url, *extra,
+        ]  # fmt: skip
+        stop = RuntimeError("reached the sorter")
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(tag_dataset, "require_sorter_capabilities", side_effect=stop),
+        ):
+            try:
+                return tag_dataset.main()
+            except RuntimeError as error:
+                self.assertIs(error, stop)
+                return -1  # got past the guard to the first sorter call
+
+    def test_in_use_dataset_stops_before_the_sorter_is_called(self):
+        with TrainerStub(200, in_use_body(True)) as stub:
+            self.assertEqual(self.run_main(stub.url), 3)
+
+    def test_allow_in_use_goes_on(self):
+        with TrainerStub(200, in_use_body(True)) as stub:
+            self.assertEqual(self.run_main(stub.url, "--allow-in-use"), -1)
+
+    def test_free_unknown_and_unreachable_trainers_go_on(self):
+        with TrainerStub(200, in_use_body(False)) as stub:
+            self.assertEqual(self.run_main(stub.url), -1)
+        with TrainerStub(404, {"detail": "Not Found"}) as stub:
+            self.assertEqual(self.run_main(stub.url), -1)
+        self.assertEqual(self.run_main("http://127.0.0.1:9"), -1)
 
 
 if __name__ == "__main__":

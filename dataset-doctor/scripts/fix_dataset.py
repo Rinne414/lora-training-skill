@@ -28,7 +28,11 @@ Commands (issue code they fix):
 Usage:
     python fix_dataset.py <command> <path> [options] [--apply] [--json]
 
-Exit code: 0 on success (dry-run or applied), 1 on bad arguments.
+If the trainer is running and reports the folder as used by a queued or running training,
+``--apply`` stops with exit 3 before changing anything; pass ``--allow-in-use`` once the user
+has agreed. A trainer that is down or too old only prints a note. Dry-runs never ask.
+
+Exit code: 0 on success (dry-run or applied), 1 on bad arguments, 3 when the dataset is in use.
 """
 
 from __future__ import annotations
@@ -556,6 +560,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         p.add_argument("path", help="train_data_dir or a <repeats>_<concept> folder")
         p.add_argument("--apply", action="store_true", help="actually make the changes")
         p.add_argument("--json", action="store_true", help="print the JSON plan/result")
+        p.add_argument(
+            "--trainer-url",
+            default=os.environ.get("SD_TRAINER_URL", "http://127.0.0.1:28000"),
+            help="SD-Trainer base URL, asked before --apply whether the dataset is in use",
+        )
+        p.add_argument(
+            "--allow-in-use",
+            action="store_true",
+            help="apply even if the trainer says a queued or running task uses this folder",
+        )
         return p
 
     p_org = add("organize", "move loose images into a <repeats>_<concept> folder")
@@ -589,6 +603,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     root = Path(args.path)
     if not root.is_dir():
         parser.error(f"path is not a directory: {root}")
+
+    if args.apply:
+        import fix_extras  # imported here because it imports this module
+
+        blocked = fix_extras.guard_apply(root, args.trainer_url, args.allow_in_use)
+        if blocked:
+            return blocked
 
     try:
         if args.command == "organize":
