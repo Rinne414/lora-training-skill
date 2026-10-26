@@ -8,6 +8,10 @@ Repeats default to the ~1500-step formula clamp(round(150 / keeps), 1, 10).
 Usage:
   python build_dataset.py --work "D:/work/mychar" --concept mychar
   python build_dataset.py --work "D:/work/mychar" --concept mychar --repeats 5
+
+If the trainer is running and reports the folder as used by a queued or running
+training, this stops (exit 3) before it replaces anything; pass --allow-in-use
+once the user has agreed.
 """
 
 from __future__ import annotations
@@ -15,9 +19,13 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 from pathlib import Path
 
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import in_use_guard  # noqa: E402
 
 
 def pick_repeats(n_keep: int) -> int:
@@ -133,6 +141,7 @@ def main() -> int:
         help="project dir (has raw/ and curation_manifest.json)",
     )
     ap.add_argument("--concept", required=True, help="concept/trigger folder name, e.g. mychar")
+    in_use_guard.add_guard_arguments(ap)
     ap.add_argument(
         "--repeats",
         type=int,
@@ -149,6 +158,14 @@ def main() -> int:
 
     keep_count = len(load_keep_records(manifest))
     repeats = a.repeats or pick_repeats(keep_count)
+    # rebuilding replaces this concept folder and any older "<n>_<concept>" sibling
+    touched = [work / "dataset" / f"{repeats}_{a.concept.strip()}"]
+    touched += sorted(
+        str(p) for p in (work / "dataset").glob(f"*_{a.concept.strip()}") if p.is_dir()
+    )
+    blocked = in_use_guard.guard_paths([str(p) for p in touched], a.trainer_url, a.allow_in_use)
+    if blocked:
+        return blocked
     result = build_dataset(work, a.concept, repeats)
     print(f"concept folder : {result['concept_dir']}")
     print(f"repeats        : {result['repeats']}  (keeps={result['keeps']})")

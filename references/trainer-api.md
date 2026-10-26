@@ -144,6 +144,55 @@ trainer is older or forgot the task, scans `<output_dir>/sample` and the TensorB
 `logging_dir` instead (pass `--since <unix time of POST /api/run>` so an earlier same-name run
 is left out). Its JSON output says which one it used (`source`) and why (`fallback_because`).
 
+### 2c. Dataset in use — `409 dataset_in_use` and `GET /api/datasets/in-use` (newer trainers only)
+
+Trainers that ship `mikazuki/utils/dataset_inuse.py` (the story-next fork, branch
+`feat/dataset-inuse-guard`) refuse to change a dataset while a **queued or running** training
+still reads it. Finished, failed and cancelled tasks do not count; a paused queue entry does not
+count either (pausing is how a user frees a dataset for editing). Folders are matched as
+absolute, symlink-resolved, case-insensitive (Windows) paths, subfolders included, over
+`train_data_dir`, `reg_data_dir`, `source_image_dir`, `resized_image_dir` and the folders a
+`dataset_config` TOML names; `data/cat` never matches `data/cats`.
+
+Guarded writes: `POST /api/dataset-editor/caption`, `/batch`, `/undo`, `/redo` (only the folders
+of the files actually touched) and `POST /api/interrogate` (its folder; with
+`batch_input_recursive` also parents of a training folder). Reading is never blocked
+(`/dataset-editor/scan`, `/image`, `/history`, `/api/tagger/status`, ...).
+
+A refused write is **HTTP 409** and changes nothing:
+
+```jsonc
+{
+  "status": "fail",
+  "reason": "dataset_in_use",
+  "operation": "caption_write",        // batch_edit | undo | redo | interrogate
+  "message": "...",                    // = detail = reason_text, English / 中文
+  "reason_text": "This dataset is used by a queued or running training task: \"night-lora\" (running). Captions changed mid-run are only partly picked up, and cached latents and text-encoder outputs will not see the change. ... / 该数据集正被排队或运行中的训练任务使用：...",
+  "path": "D:/data/cat/5_cat",
+  "tasks": [{"task_id": "...", "entry_id": null, "name": "night-lora", "output_name": "night-lora",
+             "status": "running",   // queued | running | terminating
+             "source": "task",      // task | queue (a queue entry that has not started yet)
+             "matched_dir": "D:/data/cat", "relation": "inside"}],   // same | inside | contains
+  "force_hint": "Repeat the same request with force=true (query or body field) to proceed."
+}
+```
+
+Not a hard block: repeat the **same request** with `?force=true` (or `"force": true` in the JSON
+body) and it goes through; the trainer logs `dataset-in-use override`. Only do that after the user
+agreed. Older trainers never answer 409 here.
+
+`GET /api/datasets/in-use?path=<folder>[&recursive=false]` answers without writing anything:
+`data = {path, recursive, in_use, tasks[]}` (same `tasks` objects). `recursive` (default `true`)
+also reports a task whose training folder sits *inside* `path`; with `false` only a task whose folder
+contains `path` (or equals it) counts. A missing folder is fine (`in_use: false`); an empty `path` is 400.
+An older trainer returns `404 {"detail":"Not Found"}`: treat that as "unknown", not "free".
+
+`lora-pipeline/scripts/in_use_guard.py` wraps the check for scripts that rewrite a dataset folder
+on disk (they bypass the trainer's guard): `build_dataset.py` calls it first and exits **3** with a
+`STOP:` message unless `--allow-in-use` is given (ask the user first). A trainer that is down or
+too old only prints a note and the script carries on. Standalone: `python in_use_guard.py --path
+"<folder>"` prints JSON and exits 3 when in use.
+
 ---
 
 ## 3. Auto-caption (WD14 tagger) — `POST /api/interrogate`
@@ -163,6 +212,7 @@ Generates sidecar `.txt` captions for every image in a folder. Body =
 | `replace_underscore` | `true` | `long_hair` → `long hair` |
 | `batch_input_recursive` | `false` | recurse into subfolders |
 | `batch_output_action_on_conflict` | `ignore` | `ignore` / `copy` / `append` / `prepend` for existing captions |
+| `force` | `false` | also accepted as `?force=true`; only needed after a `409 dataset_in_use` (section 2c) |
 
 Returns immediately (`"打标任务已提交"`); it runs as a background task. Poll:
 
