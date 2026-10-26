@@ -93,6 +93,17 @@ python scripts/failure_catalogue.py --task-id <task_id> --state ./insights/log_w
 - `done=true` 时输出多一个 `final_findings`：对日志尾部的一次性扫描，每类一条。训练失败或没产出文件时先看它。
 - 也可以对任何一段文字跑：`--file <日志文件> --tail 400`，或 `--text "<message>"`（`POST /api/run` 失败的 `message`、队列条目的 `error`）。
 
+**Windows：显存溢出到共享内存（训练悄悄变慢）。** 显存满了以后 Windows 驱动不一定报 OOM，而是把 CUDA 分配溢出到共享系统内存，训练慢几倍却没有任何报错。开训后在 Windows 上每隔几分钟跑一次（只读，不改任何设置）：
+
+```
+python scripts/wddm_sysmem.py --task-id <task_id> --state ./insights/wddm.json
+```
+
+- 它用 `GET /api/tasks` 里的 `config_path` 找到训练进程，经 PowerShell `Get-Counter '\GPU Process Memory(pid_<PID>*)\Shared Usage'` 读该进程的共享显存，并用 `nvidia-smi` 看显卡是否快满：共享显存 > 1 GiB **且**显卡已用 ≥ 90% 才是 `status=warn`，`announce=true` 时把 `message_*` 和 `fix_*` 原文转给用户（只第一次出现时 `announce=true`，之后同一次不再重复提醒）。
+- 修法是用户自己在 NVIDIA 控制面板 > 管理 3D 设置 > 「CUDA - 系统内存回退策略」改成「首选无系统内存回退」：代价是放不下时直接报 OOM 而不是变慢，之后按 OOM 的修法处理。**不要替用户改驱动设置。**
+- `status=unavailable`（非 Windows、计数器名被本地化、读不到该进程）就如实说「无法检查」，不是「没有问题」；`status=ok` 且带 `note_*` 说明共享显存虽高但显卡没满，不是溢出。
+- 没有照搬「EmptyWorkingSet 清工作集」：那一步要在训练进程自己里面、权重加载完之后调用，属于训练器的事；从外面去挤另一个进程的工作集会干预运行中的任务，所以不做。
+
 **读 loss 曲线和预览图。** 开训前记下发出 `POST /api/run` 的 unix 时间 `<LAUNCH_TS>`，监看时每隔几分钟（或每个 epoch）跑一次：
 
 ```
@@ -126,6 +137,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 | 一行命令修数据集问题（dry-run → --apply） | `../dataset-doctor/scripts/fix_dataset.py` |
 | API 端点、`/api/run` body、SSE、打标、显卡查询 | `../references/trainer-api.md` |
 | 日志里出现报错 / 训练失败时认原因并给修法（OOM、NaN、缺文件、页面文件不足…） | `scripts/failure_catalogue.py` |
+| Windows 上训练变慢、怀疑显存溢出到共享内存 | `scripts/wddm_sysmem.py` |
 | 读本次训练的 loss 曲线 / 预览图（优先 trainer API，老版自动退回扫描文件夹） | `scripts/task_insights.py` |
 | 判断产物 LoRA 是 28 块（2B / 1.0）还是 40 块（2.9B），并对比底模 | `scripts/lora_base_info.py`（或 `task_insights.py` 输出里的 `lora_base`） |
 | 参数含义、默认值、VRAM、步数预算 | `../references/anima-params.md` |
@@ -145,6 +157,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 9. Anima 用 `bf16`；`Automagic`/`CAME` 会被服务端强制 bf16。
 10. 读 loss / 预览用 `task_insights.py`；退回文件夹扫描时带了 `--since`，并如实转述 `loss_reason` / `previews_reason`。
 11. 监看时每次轮询都跑了 `failure_catalogue.py`；`findings` 的说明和修法原文转给用户，`error` / `missed_lines` 如实说明，没有把「没读到日志」当成「没报错」。
+12. Windows 上监看时跑了 `wddm_sysmem.py`；`warn` 只转述并建议、没有替用户改驱动设置；`unavailable` 照实说「无法检查」。
 
 ## 可验证案例（快速通道）
 
