@@ -154,6 +154,20 @@ model needs a key remap (for example the ComfyUI-Anima-28to40-Lora-Stack node); 
 load correctly on 2B. A native 40-block LoRA that never touches blocks 28-39 cannot be told apart from a
 28-block one by its keys; the report says so.
 
+`lora-trainer/scripts/failure_catalogue.py` reads `GET /api/train/log/tail/{task_id}?limit=2000` while a run
+goes (`data.lines` is the last `limit` lines, `data.total` the count of all lines so far, `data.done`
+the end flag; it keeps `total` in a state file to read only the new lines) and matches the known
+failures in its rule table: CUDA OOM, NaN loss, missing model or caption files, 0 images, `num_repeats`
+below 1, a folder without a repeat count, unsupported train type, paging file too small (`os error 1455`),
+DLL load failed, disk full, port in use, xformers / flash-attn missing, no CUDA, host RAM, damaged
+images. Each finding carries a one-line message and a concrete fix in English and Chinese; a category is
+reported at most once per 60 seconds, and `final_findings` scans the tail once the run is done. The tail
+route answers `404 "Unknown task_id"` after a trainer restart (reported as `task_unknown_to_trainer`).
+Its rules match what the trainer prints, never CLI flag names or config echoes (`--nan_guard`,
+`xformers = true`, `num_repeats: 1`); the console wraps long messages over many short lines, so the
+matcher joins up to six lines. The same script scans any text: `--text "<message>"` for the failure
+`message` of `POST /api/run` or a queue entry's `error`, `--file <log>` for a log file.
+
 ### 2c. Dataset in use — `409 dataset_in_use` and `GET /api/datasets/in-use` (newer trainers only)
 
 Trainers that ship `mikazuki/utils/dataset_inuse.py` (the story-next fork, branch

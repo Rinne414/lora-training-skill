@@ -81,7 +81,17 @@ total_steps     = steps_per_epoch × max_train_epochs   # 角色首轮检查区�
 
 **5. 开训。** `POST /api/run`，body = 组装好的 flat config（JSON）。用 PowerShell `Invoke-RestMethod`（示例见 `trainer-api.md`）。返回 `status: fail` → 把 `message` 给用户并修正；`success` → 记下 `data.task_id` 与 `data.train_log_stream_url`。
 
-**6. 监看。** 轮询 `GET /api/train/log/tail/{task_id}?limit=240`（或让用户开 `data.train_log_url` / 6008 监控面板）。盯：`loss=nan`（多见于 fp16 → 改 bf16 或换优化器）、OOM（加 `gradient_checkpointing` / `blocks_to_swap` / 降分辨率）、报错退出。
+**6. 监看。** 轮询 `GET /api/train/log/tail/{task_id}?limit=240`（或让用户开 `data.train_log_url` / 6008 监控面板）。每次轮询都跑一次故障目录：
+
+```
+python scripts/failure_catalogue.py --task-id <task_id> --state ./insights/log_watch.json
+```
+
+- 只读自上次以来的新日志行，按已知故障匹配：CUDA OOM、`avr_loss=nan`、缺模型文件、缺 caption、0 张图、`num_repeats` < 1、文件夹没写重复次数、不支持的训练类型、页面文件不足（`os error 1455`）、DLL 加载失败、磁盘满、端口占用、xformers / flash-attn 不可用等。匹配的是训练器真正打印的报错，不会被 `--nan_guard`、`xformers = true`、`num_repeats: 1` 这类参数回显误触发。
+- `findings` 每条带中英文一句话（`message_zh` / `message_en`）和具体修法（`fix_zh` / `fix_en`）；同一类 60 秒内只报一次，被压下的次数在 `suppressed`。按用户的语言原文转述，不要自己编原因。
+- `missed_lines` > 0 表示两次轮询之间日志滚得太快、漏读了一些，缩短轮询间隔；`error` 非空（`task_unknown_to_trainer` 等）如实说没读到日志，不要当作「没问题」。
+- `done=true` 时输出多一个 `final_findings`：对日志尾部的一次性扫描，每类一条。训练失败或没产出文件时先看它。
+- 也可以对任何一段文字跑：`--file <日志文件> --tail 400`，或 `--text "<message>"`（`POST /api/run` 失败的 `message`、队列条目的 `error`）。
 
 **读 loss 曲线和预览图。** 开训前记下发出 `POST /api/run` 的 unix 时间 `<LAUNCH_TS>`，监看时每隔几分钟（或每个 epoch）跑一次：
 
@@ -100,6 +110,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
    **每次训练结束都要报告 base**：`task_insights.py` 的输出里 `lora_base` 读的是产物 safetensors 文件头（只读头，不加载权重；也可单独跑 `python scripts/lora_base_info.py <lora> --base-model <pretrained_model_name_or_path>`）。按 key 里最大的 `blocks_<n>`：只有 0–27 → **28 块（Anima 2B / 1.0）**；出现 28–39 → **40 块（2.9B）**。同时读底模文件头的块数并对比，`compatible=false` 或 `warnings` 非空时把原话（中英文都有）转给用户：28 块 LoRA 放到 2.9B 上要先做 key 重映射（如 ComfyUI-Anima-28to40-Lora-Stack 节点），否则会作用到错误的层；40 块 LoRA 在 2B 上无法正确加载。`notes` 里的「只找到 0–27 块」说明按 key 布局无法区分「从不碰 28–39 块的原生 40 块 LoRA」，照实转述。最终报告里写明：产物是 28 块还是 40 块、配置的底模路径和它的块数。命名沿用 `<concept>-anima-v<N>`，该约定没有位置放块数标签，所以不改文件名，base 只写进 `lora_base`。读不了文件头（`error`）就如实说「未能确认」，不要猜。
 2. **怎么挑**：复制至少一个早期和最终快照到 ComfyUI，用 `validate.py` 在相同 seed 下与 strength 0 baseline 比较。选择能表达目标、同时仍响应姿势/主体/背景变化的快照。trainer 自带的预览图和 loss（`scripts/task_insights.py`）只做粗筛辅助，不替代 `validate.py` 的同 seed 对比。
 3. 身份弱时先比较权重 0.8–1.1，再决定是否加练；僵脸、固定姿势或内容污染时用更早快照。
+4. 训练失败、提前退出或没产出文件：对任务跑 `scripts/failure_catalogue.py --task-id <task_id>`（`done=true` 后看 `final_findings`），把匹配到的中英文说明和修法转给用户；没匹配到任何一类就如实说「没认出原因」，并给出日志尾部原文，不要猜。
 
 ## 模型与适配器分支
 
@@ -114,6 +125,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 | 开训前体检数据集 / caption | `../dataset-doctor/scripts/doctor.py` |
 | 一行命令修数据集问题（dry-run → --apply） | `../dataset-doctor/scripts/fix_dataset.py` |
 | API 端点、`/api/run` body、SSE、打标、显卡查询 | `../references/trainer-api.md` |
+| 日志里出现报错 / 训练失败时认原因并给修法（OOM、NaN、缺文件、页面文件不足…） | `scripts/failure_catalogue.py` |
 | 读本次训练的 loss 曲线 / 预览图（优先 trainer API，老版自动退回扫描文件夹） | `scripts/task_insights.py` |
 | 判断产物 LoRA 是 28 块（2B / 1.0）还是 40 块（2.9B），并对比底模 | `scripts/lora_base_info.py`（或 `task_insights.py` 输出里的 `lora_base`） |
 | 参数含义、默认值、VRAM、步数预算 | `../references/anima-params.md` |
@@ -132,6 +144,7 @@ python scripts/task_insights.py --task-id <task_id> --out ./insights --output-di
 8. **已出确认卡并取得开训确认**；未确认不 POST。
 9. Anima 用 `bf16`；`Automagic`/`CAME` 会被服务端强制 bf16。
 10. 读 loss / 预览用 `task_insights.py`；退回文件夹扫描时带了 `--since`，并如实转述 `loss_reason` / `previews_reason`。
+11. 监看时每次轮询都跑了 `failure_catalogue.py`；`findings` 的说明和修法原文转给用户，`error` / `missed_lines` 如实说明，没有把「没读到日志」当成「没报错」。
 
 ## 可验证案例（快速通道）
 
